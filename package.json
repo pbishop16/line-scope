@@ -4,7 +4,7 @@
   "description": "Node based command-line tool",
   "main": "index.js",
   "scripts": {
-    "scope": "node index.js", 
+    "scope": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -13,6 +13,9 @@
   },
   "author": "Paul Bishop",
   "license": "ISC",
+  "bin": {
+    "scope": "./index.js"
+  },
   "devDependencies": {
     "eslint": "^4.2.0"
   },
@@ -22,6 +25,8 @@
     "clui": "^0.3.6",
     "commander": "^2.11.0",
     "figlet": "^1.2.0",
+    "fs-extra": "^4.0.0",
+    "git-state": "^4.0.0",
     "inquirer": "^3.2.0",
     "lodash": "^4.17.4",
     "minimist": "^1.2.0",
