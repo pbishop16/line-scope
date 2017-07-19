@@ -1,0 +1,33 @@
+{
+  "name": "line-scope",
+  "version": "1.0.0",
+  "description": "Node based command-line tool",
+  "main": "index.js",
+  "scripts": {
+    "scope": "node index.js", 
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "line-scope"
+  },
+  "author": "Paul Bishop",
+  "license": "ISC",
+  "devDependencies": {
+    "eslint": "^4.2.0"
+  },
+  "dependencies": {
+    "chalk": "^2.0.1",
+    "clear": "0.0.1",
+    "clui": "^0.3.6",
+    "commander": "^2.11.0",
+    "figlet": "^1.2.0",
+    "inquirer": "^3.2.0",
+    "lodash": "^4.17.4",
+    "minimist": "^1.2.0",
+    "preferences": "^0.2.1",
+    "shelljs": "^0.7.8",
+    "simple-git": "^1.73.0",
+    "touch": "^3.1.0"
+  }
+}
