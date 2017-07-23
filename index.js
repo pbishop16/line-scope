@@ -11,8 +11,10 @@ const git = require('simple-git')();
 // const fs = require('fs');
 const shell = require('shelljs');
 const program = require('commander');
+// const vorpal = require('vorpal')();
 const gitState = require('git-state');
 const fs = require('fs-extra');
+const path = require('path');
 // const touch = require('touch');
 
 const files = require('./lib/files');
@@ -25,19 +27,14 @@ const {
   cat,
   cd,
   echo,
-  touch,
 } = shell;
+
+let scopePath = null;
+// let projectData = null;
 
 /******************************
  * START of main program process
  ******************************/
-program
-  .version('0.1.0')
-  .option('-S, --services', 'Display service apps')
-  .option('-e, --environment', 'Display environment details')
-  .option('-u, --update-services ', 'Edit services file')
-  .option('-U, --update-project <name>', 'Edit project file')
-  .option('-p, --process-path', 'Get process path');
 
 // program
 //   .command('setup [env]')
@@ -54,15 +51,31 @@ runProgram();
 
 
 
-
 /******************************
  * Program supporting functions
  ******************************/
 
 function runProgram() {
-  const scopePath = '/Users/pbishop/scope-files';
-  files.loadFile(scopePath,'config.json')
-    .then((data) =>{
+  scopePath = '~/scope-files';
+  const config = files.fileExistsOfCreate(scopePath, 'config.json');
+  const processSpinner = new Spinner('Processing command');
+  let projectName = null;
+  let projectData = null;
+  let servicesData = null;
+  let data;
+
+  config
+    .then(() =>{
+      return files.loadFile(scopePath,'config.json');
+    })
+    .then((configData) => {
+      data = configData;
+
+      return files.loadFile(scopePath, 'services.json');
+    })
+    .then((serData) => {
+      servicesData = serData;
+
       if (!data.filedir) {
         echo(
           chalk.red('No config file directory provided')
@@ -73,27 +86,81 @@ function runProgram() {
         );
       }
 
+      program
+        .version('0.1.0')
+        .option('-S, --services', 'Display service apps')
+        .option('-e, --environment', 'Display environment details')
+        .option('-u, --update-services ', 'Edit services file')
+        .option('-U, --update-project <name>', 'Edit project file')
+        .option('-p, --process-path', 'Get process path');
+
+      program
+        .command('branch <service>')
+        .description('Change service branch')
+        .option('-b, --branch [title]', 'Selected branch to change to.')
+        .option('-r, --reset')
+        .action((service, options) => {
+          const branch = options.branch;
+
+          changeBranch(servicesData, service, branch, options.reset);
+        });
+
+      program
+        .command('project-file <name>')
+        .action((name) => {
+          files.createSupportFile(scopePath, name);
+        });
+
+      program
+        .command('project <name>')
+        .description('Load a project to set the local environment.')
+        .action((name) => {
+          projectName = name;
+        });
+
+      clear();
+      displayTitle();
       program.parse(process.argv);
+      processSpinner.start();
+
+      if (projectName) {
+        const fullName = `${projectName}.json`;
+
+        echo('project called ' + fullName);
+
+        return files.loadFile(scopePath, fullName);
+      }
 
       if (program.services) {
-        clear();
-        displayTitle();
-        loadServices();
+        processSpinner.stop();
+        loadServices(servicesData);
       }
 
       if (program.environment) {
-        clear();
-        displayTitle();
+        processSpinner.stop();
         getLocalEnvironmentDetails();
       }
 
       if (program.processPath) {
-        clear();
-        displayTitle();
+        processSpinner.stop();
         processPath();
       }
-      cd();
+
       process.exit(1);
+    }).then((data) => {
+      // echo(projectData);
+      projectData = data;
+
+      loadProject(servicesData, projectData);
+      processSpinner.stop();
+      process.exit(1);
+    })
+    .catch(err => {
+      echo(
+        chalk.red(err)
+      );
+      scopePath = null;
+      projectData = null;
     });
 }
 
@@ -113,25 +180,19 @@ function displayPath() {
 
 function processPath() {
   echo(
-    chalk.blueBright(`Scope path: ${files.getScopePath()}`)
+    chalk.blueBright(`Scope path: ${files.getCurrentDirectory()}`)
   );
 }
-
-/*
- * Get folder path for location where the tool is initiated
- *
- */
-
 
 /*
  * Load package for this directory/repo
  *
  */
-function loadServices() {
-  const file = JSON.parse(cat('services.json'));
-  const rootDir = file.root;
+function loadServices(data) {
+  // const file = JSON.parse(cat('services.json'));
+  const rootDir = data.root;
 
-  file.services.forEach(({name,directory}) => {
+  data.services.forEach(({name,directory}) => {
     const dir = rootDir + directory;
     const fileStatus = getBranchStatus(dir);
     const {
@@ -145,6 +206,21 @@ function loadServices() {
     echo(chalk.bold.green(`Service: ${name} [${branch}] ahead:${ahead} | dirty:${dirty} | untracked:${untracked} | stashes:${stashes}`));
     echo(`${chalk.blueBright(fileStatus || ' All Clean...\n')}\ ${chalk.green('Directory: ' + dir)}`);
     echo('');
+  });
+}
+
+function loadProject(servicesData, projectData) {
+  servicesData.services.forEach((service) => {
+    const selected = projectData['base'].filter((project) => {
+      return project.name === service.name;
+    });
+    const selectedProject = selected[0];
+    const serviceData = {
+      root: servicesData.root,
+      directory: service.directory,
+    };
+
+    changeBranch(serviceData, selectedProject.name, selectedProject.branch, false);
   });
 }
 
@@ -198,7 +274,7 @@ function getBranch(dir) {
   let branch;
   cd(dir);
   branch = exec('git branch | grep \\*', {silent: true});
-  cd();
+  cd('-');
 
   return branch.stdout;
 }
@@ -211,7 +287,7 @@ function getBranchStatus(dir) {
   let status;
   cd(dir);
   status = exec('git status --porcelain=v1', {silent: true});
-  cd();
+  cd('-');
 
   return status.stdout;
 }
@@ -221,32 +297,56 @@ function getBranchStatus(dir) {
  * Git change branch
  *
  */
+function changeBranch(fileData, service, setBranch, reset) {
+  let branchOut;
+  let branch = setBranch || 'master';
+  let selectedService, selected, dir;
+  // echo('Type: ' + typeof(fileData));
 
-function changeBranch(cmd) {
+  if (typeof(fileData) === 'object') {
+    selectedService = fileData;
+  } else {
+    selected = fileData.services.filter((serviceObj) => {
+      return serviceObj.name === service;
+    });
+    selectedService = selected[0];
+  }
 
-}
+  dir = fileData.root + selectedService.directory;
 
+  // cd(dir);
+  // echo('Directory: ' + dir);
+  // echo('Service: ' + service);
+  // echo('Branch: ' + branch);
+  // echo('');
 
-/*
- * Creat service or project file
- *
- */
-function createSupportFile(type, options) {
-  cd(options.dir);
-  touch(`${options.name}.json`);
-  exec(`open ${options.name}.json`);
-}
-
-function updateFile(name, dir, data) {
-  fs.writeJson(`.${dir}\\${name}`, data)
-    .then(() =>{
+  git
+    .cwd(dir)
+    .stash()
+    .reset('soft', (err) => {
       echo(
-        chalk.green(`${name} Updated!!!`)
+        chalk.red('Reset: ' + err)
       );
     })
-    .catch(err => {
+    .checkoutBranch(branch)
+    .then((result) => {
+      echo('Result: ' + result);
+    })
+    .catch((err) => {
       echo(
-        chalk.red(`${name} update failed: ${err}`)
+        chalk.red('Failed: ', err)
       );
     });
+
+  // if (reset) {
+  //   const rMessage = exec('git reset --hard', {silent: true});
+  //   echo(
+  //     chalk.blue(rMessage.stdout)
+  //   );
+  // }
+  // exec('git stash', {silent: true});
+  // branchOut = exec(`git checkout ${branch}`, {silent: true});
+  // cd('-');
+  //
+  // echo (`${chalk.green('Service: ' + service)} - ${chalk.green(branchOut.stdout)} - ${chalk.green(branchOut.stderr)}`);
 }
