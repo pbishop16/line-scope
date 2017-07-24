@@ -8,62 +8,57 @@ const inquirer = require('inquirer');
 const Preferences = require('preferences');
 const _ = require('lodash');
 const git = require('simple-git')();
-// const fs = require('fs');
 const shell = require('shelljs');
 const program = require('commander');
-// const vorpal = require('vorpal')();
 const gitState = require('git-state');
 const fs = require('fs-extra');
 const path = require('path');
+const Docker = require('dockerode');
 // const touch = require('touch');
 
 const files = require('./lib/files');
-const screen = require('./lib/screen');
+const docker = require('./lib/docker');
 
 const Spinner = CLI.Spinner;
 
 const {
   exec,
-  cat,
   cd,
   echo,
 } = shell;
 
 let scopePath = null;
-// let projectData = null;
+const masterDbName = 'master-db';
+const tools = [
+  { name: 'npm', cmd: '', install: false },
+  { name: 'node', cmd: '', install: false },
+  { name: 'ruby', cmd: '', install: false },
+  { name: 'brew', cmd: '', install: false },
+  { name: 'git', cmd: '', install: false },
+  { name: 'nvm', cmd: '', install: false },
+  { name: 'rbenv', cmd: '', install: false },
+  { name: 'powder', cmd: 'version', install: false },
+  { name: 'docker', cmd: '', install: false },
+  { name: 'docker-compose', cmd: '', install: false },
+  { name: 'docker-machine', cmd: '', install: false },
+];
 
 /******************************
  * START of main program process
  ******************************/
 
-// program
-//   .command('setup [env]')
-//   .description('setup new services or project file')
-//   .option('-n, --name [name]', 'Set file name')
-//   .option('-d, --dir [dir]', 'Set directory')
-//   .action(createSupportFile(env, options));
-
 runProgram();
-
-/******************************
- * END of main program process
- ******************************/
-
-
-
-/******************************
- * Program supporting functions
- ******************************/
 
 function runProgram() {
   scopePath = '~/scope-files';
   const config = files.fileExistsOfCreate(scopePath, 'config.json');
   const processSpinner = new Spinner('Processing command');
-  let projectName = null;
+  let project = null;
   let projectData = null;
   let servicesData = null;
   let data;
 
+  // Startup
   config
     .then(() =>{
       return files.loadFile(scopePath,'config.json');
@@ -90,7 +85,7 @@ function runProgram() {
         .version('0.1.0')
         .option('-S, --services', 'Display service apps')
         .option('-e, --environment', 'Display environment details')
-        .option('-u, --update-services ', 'Edit services file')
+        .option('-u, --update-services', 'Edit services file')
         .option('-U, --update-project <name>', 'Edit project file')
         .option('-p, --process-path', 'Get process path');
 
@@ -106,6 +101,13 @@ function runProgram() {
         });
 
       program
+        .command('tail <service>')
+        .description('Tail the development log of a particular service')
+        .action((service) => {
+          tailService(servicesData , service);
+        });
+
+      program
         .command('project-file <name>')
         .action((name) => {
           files.createSupportFile(scopePath, name);
@@ -113,18 +115,27 @@ function runProgram() {
 
       program
         .command('project <name>')
+        .option('-s, --set <name>', 'Project branch set')
+        .option('-u, --update', 'Runs bundle install, migrations, seeds')
+        .option('-v, --volume <name>', 'Link project to a new database volume')
+        .option('-r, --reset', 'Full reset of the project database volume')
         .description('Load a project to set the local environment.')
-        .action((name) => {
-          projectName = name;
+        .action((name, options) => {
+          project = {
+            name,
+            options,
+          };
         });
 
+      //Start of Line-Scope script execution
       clear();
       displayTitle();
+      displayPath();
       program.parse(process.argv);
       processSpinner.start();
 
-      if (projectName) {
-        const fullName = `${projectName}.json`;
+      if (project) {
+        const fullName = `${project.name}.json`;
 
         echo('project called ' + fullName);
 
@@ -148,10 +159,9 @@ function runProgram() {
 
       process.exit(1);
     }).then((data) => {
-      // echo(projectData);
       projectData = data;
 
-      loadProject(servicesData, projectData);
+      loadProject(servicesData, projectData, project);
       processSpinner.stop();
       process.exit(1);
     })
@@ -162,6 +172,28 @@ function runProgram() {
       scopePath = null;
       projectData = null;
     });
+}
+
+/******************************
+ * END of main program process
+ ******************************/
+
+
+
+/******************************
+ * Program supporting functions
+ ******************************/
+
+function initalSetup() {
+  // install dependencies
+  // brew
+  // rbenv
+  // docker
+  // powder
+  // ruby
+
+  // 1. run getLocalEnvironmentDetails();
+  // 2. run installDependencies();
 }
 
 function displayTitle() {
@@ -184,12 +216,17 @@ function processPath() {
   );
 }
 
+function installDependencies() {
+  const installSet = _.filter(tools, (tool) => tool.install);
+
+
+}
+
 /*
- * Load package for this directory/repo
+ * Load details for this directory/repo
  *
  */
 function loadServices(data) {
-  // const file = JSON.parse(cat('services.json'));
   const rootDir = data.root;
 
   data.services.forEach(({name,directory}) => {
@@ -209,9 +246,16 @@ function loadServices(data) {
   });
 }
 
-function loadProject(servicesData, projectData) {
+/*
+ * Load project branches and db volume
+ *
+ */
+function loadProject(servicesData, projectData, projectCmd) {
+  const set = projectCmd.options.set || 'base';
+  const projectDbName = `${projectCmd.name}-db`;
+
   servicesData.services.forEach((service) => {
-    const selected = projectData['base'].filter((project) => {
+    const selected = projectData[set].filter((project) => {
       return project.name === service.name;
     });
     const selectedProject = selected[0];
@@ -220,8 +264,29 @@ function loadProject(servicesData, projectData) {
       directory: service.directory,
     };
 
+    // Docker: stop container
+    const currentActiveDB = '';
+    docker.stopContainer(currentActiveDB);
+    // Docker: check for existing project volume or create new volume from master volume
+    // Docker: link volume to container
+    // Docker: start container
+    const newDb = `db-${projectDbName}`;
+    docker.dbExists(newDb);
+    docker.createDockerDb(newDb);
     changeBranch(serviceData, selectedProject.name, selectedProject.branch, false);
+
+    // If new volume
+    // Git: run git pull
+    // : Run bundle install
+    // : Run bundle exec rake db:migrate
+
+    // (Option '-u, --update')
+    // Git: run git pull
+    // : Run bundle install
+    // : Run bundle exec rake db:migrate
   });
+
+  docker.copyVolume(masterDbName, projectDbName);
 }
 
 /*
@@ -229,16 +294,6 @@ function loadProject(servicesData, projectData) {
  * Versions: (npm, node, ruby, ember, react, git, nvm, brew)
  */
 function getLocalEnvironmentDetails() {
-  const tools = [
-    { name: 'npm', cmd: '' },
-    { name: 'node', cmd: '' },
-    { name: 'ruby', cmd: '' },
-    { name: 'brew', cmd: '' },
-    { name: 'git', cmd: '' },
-    { name: 'nvm', cmd: '' },
-    { name: 'rbenv', cmd: '' },
-    { name: 'powder', cmd: 'version' },
-  ];
 
   tools.forEach((tool) => {
     const version = getVersion(tool);
@@ -249,22 +304,16 @@ function getLocalEnvironmentDetails() {
   });
 }
 
-function getVersion({ name, cmd }) {
-  const command = cmd || '--version';
-  const version = exec(`${name} ${command}`, {silent: true});
+function getVersion(tool) {
+  const command = tool.cmd || '--version';
+  const version = exec(`${tool.name} ${command}`, {silent: true});
 
   if (version.code !== 0) {
-    return `- ${name.toUpperCase()} not available, error: (${version.stderr}), code: ${version.code}`;
+    tool.install = true;
+    return `- ${tool.name.toUpperCase()} not available, error: (${version.stderr}), code: ${version.code}`;
   }
-  return `- ${name.toUpperCase()} Version: ${version.stdout}`;
+  return `- ${tool.name.toUpperCase()} Version: ${version.stdout}`;
 }
-
-/*
- * Prompt user to see a selectable list of common commands
- *
- */
-
-
 
 /*
  * Get the service's current branch
@@ -284,12 +333,14 @@ function getBranch(dir) {
  *
  */
 function getBranchStatus(dir) {
+  const re = /Your[\s\S]+\.\s/g;
   let status;
   cd(dir);
-  status = exec('git status --porcelain=v1', {silent: true});
+  status = exec('git status', {silent: true});
+
   cd('-');
 
-  return status.stdout;
+  return status.stdout.match(re);
 }
 
 
@@ -298,55 +349,47 @@ function getBranchStatus(dir) {
  *
  */
 function changeBranch(fileData, service, setBranch, reset) {
-  let branchOut;
+  let cmdResult;
   let branch = setBranch || 'master';
   let selectedService, selected, dir;
-  // echo('Type: ' + typeof(fileData));
 
-  if (typeof(fileData) === 'object') {
-    selectedService = fileData;
-  } else {
+  if (fileData.services) {
     selected = fileData.services.filter((serviceObj) => {
       return serviceObj.name === service;
     });
     selectedService = selected[0];
+  } else {
+    selectedService = fileData;
   }
 
   dir = fileData.root + selectedService.directory;
 
-  // cd(dir);
-  // echo('Directory: ' + dir);
-  // echo('Service: ' + service);
-  // echo('Branch: ' + branch);
-  // echo('');
+  cd(dir);
+  /*** Convert to test code ***/
+  echo('Directory: ' + dir);
+  echo('Service: ' + service);
+  echo('Branch: ' + branch);
+  echo('');
+  /***************************/
 
-  git
-    .cwd(dir)
-    .stash()
-    .reset('soft', (err) => {
-      echo(
-        chalk.red('Reset: ' + err)
-      );
-    })
-    .checkoutBranch(branch)
-    .then((result) => {
-      echo('Result: ' + result);
-    })
-    .catch((err) => {
-      echo(
-        chalk.red('Failed: ', err)
-      );
-    });
+  if (reset) {
+    const rMessage = exec('git reset --hard', {silent: true});
 
-  // if (reset) {
-  //   const rMessage = exec('git reset --hard', {silent: true});
-  //   echo(
-  //     chalk.blue(rMessage.stdout)
-  //   );
-  // }
-  // exec('git stash', {silent: true});
-  // branchOut = exec(`git checkout ${branch}`, {silent: true});
-  // cd('-');
-  //
-  // echo (`${chalk.green('Service: ' + service)} - ${chalk.green(branchOut.stdout)} - ${chalk.green(branchOut.stderr)}`);
+    echo(
+      chalk.blue(rMessage.stdout)
+    );
+  }
+  exec('git stash', {silent: true});
+  cmdResult = exec(`git checkout ${branch}`, {silent: true});
+  cd('-');
+
+  echo (`${chalk.green('Service: ' + service)} - ${chalk.green(cmdResult.stdout)} - ${chalk.green(cmdResult.stderr)}`);
+}
+
+function tailService(data, service) {
+  const tailCmd = 'tail -f log/development.log';
+  const dir = data.root + service;
+
+  cd(dir);
+  exec(tailCmd);
 }
