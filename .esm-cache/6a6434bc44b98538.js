@@ -1,4 +1,4 @@
-const shell = require('shelljs');
+"use script";const shell = require('shelljs');
 const fs = require('fs-extra');
 const chalk = require('chalk');
 const path = require('path');

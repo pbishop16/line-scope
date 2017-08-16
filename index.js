@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+require('@std/esm');
 const chalk = require('chalk');
+// import chalk from 'chalk';
 const clear = require('clear');
 const CLI = require('clui');
 const figlet = require('figlet');
@@ -30,17 +32,65 @@ const {
 let scopePath = null;
 const masterDbName = 'master-db';
 const tools = [
-  { name: 'npm', cmd: '', install: false },
-  { name: 'node', cmd: '', install: false },
-  { name: 'ruby', cmd: '', install: false },
-  { name: 'brew', cmd: '', install: false },
-  { name: 'git', cmd: '', install: false },
-  { name: 'nvm', cmd: '', install: false },
-  { name: 'rbenv', cmd: '', install: false },
-  { name: 'powder', cmd: 'version', install: false },
-  { name: 'docker', cmd: '', install: false },
-  { name: 'docker-compose', cmd: '', install: false },
-  { name: 'docker-machine', cmd: '', install: false },
+  {
+    name: 'npm',
+    cmd: '',
+    installed: false,
+    install: 'nvm install 6.6.0'
+  },
+  {
+    name: 'node',
+    cmd: '',
+    installed: false,
+    install: ''
+  },
+  {
+    name: 'ruby',
+    cmd: '',
+    installed: false,
+    install: ''
+  },
+  {
+    name: 'brew',
+    cmd: '',
+    installed: false
+  },
+  {
+    name: 'git',
+    cmd: '',
+    installed: false
+  },
+  {
+    name: 'nvm',
+    cmd: '',
+    installed: false,
+    install: 'curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.33.2/install.sh | bash'
+  },
+  {
+    name: 'rbenv',
+    cmd: '',
+    installed: false
+  },
+  {
+    name: 'powder',
+    cmd: 'version',
+    installed: false
+  },
+  {
+    name: 'docker',
+    cmd: '',
+    installed: false
+  },
+  {
+    name: 'docker-compose',
+    cmd: '',
+    installed: false
+  },
+  {
+    name: 'docker-machine',
+    cmd: '',
+    installed: false
+  },
 ];
 
 /******************************
@@ -49,99 +99,169 @@ const tools = [
 
 runProgram();
 
-function runProgram() {
-  scopePath = '~/scope-files';
-  const config = files.fileExistsOfCreate(scopePath, 'config.json');
+async function runProgram() {
   const processSpinner = new Spinner('Processing command');
+  scopePath = '~/scope-files';
+
+  await files.fileExistsOfCreate(scopePath, 'config.json');
+
   let project = null;
   let projectData = null;
   let servicesData = null;
   let data;
 
-  // Startup
-  config
-    .then(() =>{
-      return files.loadFile(scopePath,'config.json');
-    })
-    .then((configData) => {
-      data = configData;
+  try {
+    data = await files.loadFile(scopePath,'config.json');
 
-      return files.loadFile(scopePath, 'services.json');
-    })
-    .then((serData) => {
-      servicesData = serData;
+    servicesData = await files.loadFile(scopePath, 'services.json');
 
-      if (!data.filedir) {
-        echo(
-          chalk.red('No config file directory provided')
-        );
-      } else {
-        echo(
-          chalk.green('Config file upto date!')
-        );
-      }
+    if (!data.filedir) {
+      echo(
+        chalk.red('No config file directory provided')
+      );
+    } else {
+      echo(
+        chalk.green('Config file up to date!')
+      );
+    }
 
-      program
-        .version('0.1.0')
-        .option('-S, --services', 'Display service apps')
-        .option('-e, --environment', 'Display environment details')
-        .option('-u, --update-services', 'Edit services file')
-        .option('-U, --update-project <name>', 'Edit project file')
-        .option('-p, --process-path', 'Get process path');
+    program
+      .version('0.1.0')
+      .option('-S, --services', 'Display service apps')
+      .option('-e, --environment', 'Display environment details')
+      .option('-u, --update-services', 'Edit services file')
+      .option('-U, --update-project <name>', 'Edit project file')
+      .option('-p, --process-path', 'Get process path');
 
-      program
-        .command('branch <service>')
-        .description('Change service branch')
-        .option('-b, --branch [title]', 'Selected branch to change to.')
-        .option('-r, --reset')
-        .action((service, options) => {
-          const branch = options.branch;
+    program
+      .command('branch <service>')
+      .description('Change service branch')
+      .option('-b, --branch [title]', 'Selected branch to change to.')
+      .option('-r, --reset')
+      .option('-u, --update')
+      .action((service, options) => {
+        const branch = options.branch;
 
-          changeBranch(servicesData, service, branch, options.reset);
-        });
+        changeBranch(servicesData, service, branch, options.reset);
 
-      program
-        .command('tail <service>')
-        .description('Tail the development log of a particular service')
-        .action((service) => {
-          tailService(servicesData , service);
-        });
+        if (options.update) {
+          updateService(servicesData);
+        }
+      });
 
-      program
-        .command('project-file <name>')
-        .action((name) => {
-          files.createSupportFile(scopePath, name);
-        });
+    program
+      .command('tail <service>')
+      .description('Tail the development log of a particular service')
+      .action((service) => {
+        tailService(servicesData , service);
+      });
 
-      program
-        .command('project <name>')
-        .option('-s, --set <name>', 'Project branch set')
-        .option('-u, --update', 'Runs bundle install, migrations, seeds')
-        .option('-v, --volume <name>', 'Link project to a new database volume')
-        .option('-r, --reset', 'Full reset of the project database volume')
-        .description('Load a project to set the local environment.')
-        .action((name, options) => {
-          project = {
-            name,
-            options,
-          };
-        });
+    program
+      .command('project-file <name>')
+      .action((name) => {
+        files.createSupportFile(scopePath, name);
+      });
 
-      //Start of Line-Scope script execution
-      clear();
-      displayTitle();
-      displayPath();
-      program.parse(process.argv);
-      processSpinner.start();
+    program
+      .command('database <name>')
+      .option('-n, --new')
+      .option('-s, --start')
+      .option('-c, --cancel')
+      .option('-D, --destroy')
+      .option('-E, --exists')
+      .action((name, options) => {
+        let currentDbName;
+        let result;
 
-      if (project) {
-        const fullName = `${project.name}.json`;
+        switch (true) {
+        case !!options.new:
+          echo('new database');
+          result = docker.createDockerDb(name);
+          echo(
+            chalk.green(`Database ${result} created successfully!`)
+          );
+          break;
+        case !!options.start:
+          echo('start database');
+          currentDbName = docker.currentDb();
 
-        echo('project called ' + fullName);
+          if (currentDbName === name) {
+            echo(
+              chalk.red(`${currentDbName} is already running`)
+            );
+            break;
+          }
 
-        return files.loadFile(scopePath, fullName);
-      }
+          docker.stopContainer(currentDbName);
+          docker.startContainer(name);
+          echo(
+            chalk.green(`Switched from ${currentDbName} to ${name}`)
+          );
+          break;
+        case !!options.cancel:
+          echo('stop database');
+          result = docker.stopContainer(name);
+          echo(
+            chalk.green(`Database ${result.stdout} stopped!`)
+          );
+          break;
+        case !!options.destroy:
+          echo('Delete database');
 
+          break;
+        case !!options.exists:
+          result = docker.dbExists(name);
+          if (result) {
+            echo(
+              chalk.green(`${name} exists`)
+            );
+          } else {
+            echo(
+              chalk.red(`${name} does not exists`)
+            );
+          }
+          break;
+        default:
+          currentDbName = docker.currentDb();
+          echo(
+            chalk.green(`Current Database: ${currentDbName}`)
+          );
+        }
+      });
+
+    program
+      .command('project <name>')
+      .option('-s, --set', 'Project branch set')
+      .option('-u, --update', 'Runs bundle install, migrations, seeds')
+      .option('-v, --volume', 'Link project to a new database volume')
+      .option('-r, --reset', 'Full reset of the project database volume')
+      .description('Load a project to set the local environment.')
+      .action((name, options) => {
+        project = {
+          name,
+          options,
+        };
+      });
+
+    //Start of Line-Scope script execution
+    clear();
+    displayTitle();
+    displayPath();
+    program.parse(process.argv);
+    processSpinner.start();
+
+    if (project) {
+      const fullName = `${project.name}.json`;
+
+      echo('project called ' + fullName);
+
+      projectData = await files.loadFile(scopePath, fullName);
+
+      await loadProject(servicesData, projectData, project);
+
+      processSpinner.stop();
+      process.exit(1);
+    } else {
       if (program.services) {
         processSpinner.stop();
         loadServices(servicesData);
@@ -158,20 +278,15 @@ function runProgram() {
       }
 
       process.exit(1);
-    }).then((data) => {
-      projectData = data;
+    }
 
-      loadProject(servicesData, projectData, project);
-      processSpinner.stop();
-      process.exit(1);
-    })
-    .catch(err => {
-      echo(
-        chalk.red(err)
-      );
-      scopePath = null;
-      projectData = null;
-    });
+  } catch (err) {
+    echo(
+      chalk.red(err)
+    );
+    scopePath = null;
+    projectData = null;
+  }
 }
 
 /******************************
@@ -199,7 +314,7 @@ function initalSetup() {
 function displayTitle() {
   echo(
     chalk.yellow(
-      figlet.textSync('Line Scope', { horizontoalLayout: 'full' })
+      figlet.textSync('Line Scope', { horizontalLayout: 'full' })
     )
   );
 }
@@ -250,9 +365,9 @@ function loadServices(data) {
  * Load project branches and db volume
  *
  */
-function loadProject(servicesData, projectData, projectCmd) {
+async function loadProject(servicesData, projectData, projectCmd) {
   const set = projectCmd.options.set || 'base';
-  const projectDbName = `${projectCmd.name}-db`;
+  const projectDbName = `db-${projectCmd.name}`;
 
   servicesData.services.forEach((service) => {
     const selected = projectData[set].filter((project) => {
@@ -264,29 +379,55 @@ function loadProject(servicesData, projectData, projectCmd) {
       directory: service.directory,
     };
 
-    // Docker: stop container
-    const currentActiveDB = '';
-    docker.stopContainer(currentActiveDB);
-    // Docker: check for existing project volume or create new volume from master volume
-    // Docker: link volume to container
-    // Docker: start container
-    const newDb = `db-${projectDbName}`;
-    docker.dbExists(newDb);
-    docker.createDockerDb(newDb);
     changeBranch(serviceData, selectedProject.name, selectedProject.branch, false);
 
-    // If new volume
+    // const dbExists = docker.dbExists(projectDbName);
+
+    if (!dbExists) {
+      updateService(serviceData);
+    }
+  });
+
+  // Docker: stop container
+  const currentActiveDB = '';
+  await docker.stopContainer(currentActiveDB);
+  // Docker: check for existing project volume or create new volume from master volume
+  // Docker: link volume to container
+  // Docker: start container
+  const newDb = `db-${projectDbName}`;
+  const dbExists = await docker.dbExists(newDb);
+  if (!dbExists) {
+    await docker.createDockerDb(newDb);
+  }
+
+  await docker.startContainer(newDb);
+
+  // If new volume
+  if (!dbExists) {
     // Git: run git pull
-    // : Run bundle install
+    exec('git pull');
+    // : Run backend commands
+
     // : Run bundle exec rake db:migrate
 
     // (Option '-u, --update')
     // Git: run git pull
     // : Run bundle install
     // : Run bundle exec rake db:migrate
-  });
+  }
+}
 
-  docker.copyVolume(masterDbName, projectDbName);
+async function updateService(service) {
+  const silent = false;
+
+  if (service.type === 'backend') {
+    exec('bundle install', { silent });
+    exec('bundle exec rake db:migrate', { silent });
+
+    service.service_cmd.forEach((cmd) => {
+      exec(cmd, { silent });
+    });
+  }
 }
 
 /*
@@ -306,10 +447,15 @@ function getLocalEnvironmentDetails() {
 
 function getVersion(tool) {
   const command = tool.cmd || '--version';
-  const version = exec(`${tool.name} ${command}`, {silent: true});
+  let version;
+  if (tool.name === 'nvm') {
+    version = exec(`${tool.name} ${command}`, {silent: true});
+  } else {
+    version = exec(`${tool.name} ${command}`, {silent: true});
+  }
 
   if (version.code !== 0) {
-    tool.install = true;
+    tool.installed = true;
     return `- ${tool.name.toUpperCase()} not available, error: (${version.stderr}), code: ${version.code}`;
   }
   return `- ${tool.name.toUpperCase()} Version: ${version.stdout}`;
@@ -372,18 +518,41 @@ function changeBranch(fileData, service, setBranch, reset) {
   echo('');
   /***************************/
 
-  if (reset) {
-    const rMessage = exec('git reset --hard', {silent: true});
+  // if (reset) {
+  //   const rMessage = exec('git reset --hard', {silent: true});
+  //
+  //   echo(
+  //     chalk.blue(rMessage.stdout)
+  //   );
+  // } else {
+  //  const sMessage =  exec('git stash', {silent: true});
+  //  echo(
+  //    chalk.blue(sMessage.stdout);
+  //  )
+  // }
+  // cmdResult = exec(`git checkout ${branch}`, {silent: true});
+  // cd('-');
+  //
+  // echo (`${chalk.green('Service: ' + service)} - ${chalk.green(cmdResult.stdout)} - ${chalk.green(cmdResult.stderr)}`);
+}
 
-    echo(
-      chalk.blue(rMessage.stdout)
-    );
+function createDatabase(name) {
+  try {
+    const newDb = `db-${name}`;
+    const result = docker.createDockerDb(newDb);
+    if (result.code === 0) {
+      echo(
+        chalk.green(`${newDb} successfully create and is running`)
+      );
+    } else {
+      echo(
+        chalk.red(`Database ${newDb} could not be created check for duplicates below`)
+      );
+      docker.dbExists(newDb);
+    }
+  } catch(e) {
+    echo(e);
   }
-  exec('git stash', {silent: true});
-  cmdResult = exec(`git checkout ${branch}`, {silent: true});
-  cd('-');
-
-  echo (`${chalk.green('Service: ' + service)} - ${chalk.green(cmdResult.stdout)} - ${chalk.green(cmdResult.stderr)}`);
 }
 
 function tailService(data, service) {
@@ -392,4 +561,29 @@ function tailService(data, service) {
 
   cd(dir);
   exec(tailCmd);
+}
+
+function run(cmd, options) {
+  const processSpinner = new Spinner('Executing command...');
+  let command = cmd;
+  let output;
+  processSpinner.start();
+
+  try {
+    if (typeof(cmd) !== 'string') {
+      command = cmd.toString();
+    }
+    output = exec(command, { silent: options.silent });
+
+    if (options.return) {
+      processSpinner.stop();
+      return output;
+    }
+  } catch(e) {
+    echo(
+      chalk.red(e)
+    );
+  } finally {
+    processSpinner.stop();
+  }
 }
