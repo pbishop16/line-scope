@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-require('@std/esm');
+// require('@std/esm');
 const chalk = require('chalk');
-// import chalk from 'chalk';
 const clear = require('clear');
 const CLI = require('clui');
 const figlet = require('figlet');
@@ -16,12 +15,22 @@ const gitState = require('git-state');
 const fs = require('fs-extra');
 const path = require('path');
 const Docker = require('dockerode');
+const cliSpinners = require('cli-spinners');
+const _setInterval = require('setinterval-plus');
+const heartbeats = require('heartbeats');
+const elegantStatus = require('elegant-status');
+const Q = require('q');
+
 // const touch = require('touch');
+const heart = heartbeats.createHeart(1000);
 
 const files = require('./lib/files');
 const docker = require('./lib/docker');
+const countdownSpinner = require('./lib/spinner');
 
 const Spinner = CLI.Spinner;
+
+process.stdout.write = process.stdout.write.bind(process.stdout);
 
 const {
   exec,
@@ -53,23 +62,28 @@ const tools = [
   {
     name: 'brew',
     cmd: '',
-    installed: false
+    installed: false,
+    install: [
+      '/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"'
+    ]
   },
   {
     name: 'git',
     cmd: '',
     installed: false
   },
-  {
-    name: 'nvm',
-    cmd: '',
-    installed: false,
-    install: 'curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.33.2/install.sh | bash'
-  },
+  // {
+  //   name: 'nvm',
+  //   cmd: '',
+  //   installed: false,
+  //   install: [
+  //     'curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.33.2/install.sh | bash'
+  //   ]
+  // },
   {
     name: 'rbenv',
     cmd: '',
-    installed: false
+    installed: false,
   },
   {
     name: 'powder',
@@ -79,7 +93,12 @@ const tools = [
   {
     name: 'docker',
     cmd: '',
-    installed: false
+    installed: false,
+    install: [
+      'brew install docker docker-compose docker-machine xhyve docker-machine-driver-xhyve',
+      'sudo chown root:wheel $(brew --prefix)/opt/docker-machine-driver-xhyve/bin/docker-machine-driver-xhyve',
+      'sudo chmod u+s $(brew --prefix)/opt/docker-machine-driver-xhyve/bin/docker-machine-driver-xhyve'
+    ]
   },
   {
     name: 'docker-compose',
@@ -96,11 +115,11 @@ const tools = [
 /******************************
  * START of main program process
  ******************************/
-
+// const processSpinner = new Spinner('Processing command');
+// processSpinner.start();
 runProgram();
 
 async function runProgram() {
-  const processSpinner = new Spinner('Processing command');
   scopePath = '~/scope-files';
 
   await files.fileExistsOfCreate(scopePath, 'config.json');
@@ -131,26 +150,30 @@ async function runProgram() {
       .option('-e, --environment', 'Display environment details')
       .option('-u, --update-services', 'Edit services file')
       .option('-U, --update-project <name>', 'Edit project file')
-      .option('-p, --process-path', 'Get process path');
+      .option('-p, --process-path', 'Get process path')
+      .option('-r, --run-spinner', 'Test run spinner');
 
     program
       .command('branch <service>')
+      .alias('b')
       .description('Change service branch')
       .option('-b, --branch [title]', 'Selected branch to change to.')
-      .option('-r, --reset')
-      .option('-u, --update')
+      .option('-r, --reset', 'Force a hard reset of the branch when checking out')
+      .option('-u, --update', 'Update the service based on the current branch')
+      .option('--special', 'Run service specific command')
       .action((service, options) => {
         const branch = options.branch;
 
         changeBranch(servicesData, service, branch, options.reset);
 
         if (options.update) {
-          updateService(servicesData);
+          updateService(servicesData, service, options.special);
         }
       });
 
     program
       .command('tail <service>')
+      .alias('t')
       .description('Tail the development log of a particular service')
       .action((service) => {
         tailService(servicesData , service);
@@ -158,17 +181,21 @@ async function runProgram() {
 
     program
       .command('project-file <name>')
+      .alias('pf')
+      .description('Creates a new project mapping file')
       .action((name) => {
         files.createSupportFile(scopePath, name);
       });
 
     program
       .command('database <name>')
-      .option('-n, --new')
-      .option('-s, --start')
-      .option('-c, --cancel')
-      .option('-D, --destroy')
-      .option('-E, --exists')
+      .alias('db')
+      .description('Provides basic docker database management')
+      .option('-n, --new', 'Create a new database')
+      .option('-s, --start', 'Stops the current database and starts an existing one')
+      .option('-c, --cancel', 'Stops the current active database')
+      .option('-D, --destroy', 'Removes an existing database')
+      .option('-E, --exists', 'Checks if a database exists')
       .action((name, options) => {
         let currentDbName;
         let result;
@@ -182,29 +209,31 @@ async function runProgram() {
           );
           break;
         case !!options.start:
-          echo('start database');
           currentDbName = docker.currentDb();
 
           if (currentDbName === name) {
-            echo(
-              chalk.red(`${currentDbName} is already running`)
-            );
+            echo(chalk.yellow(`${currentDbName} is already running`));
             break;
           }
 
-          docker.stopContainer(currentDbName);
+          currentDbName && docker.stopContainer(currentDbName);
           docker.startContainer(name);
-          echo(
-            chalk.green(`Switched from ${currentDbName} to ${name}`)
-          );
+
+          if (currentDbName) {
+            echo(chalk.green(`Switched from ${currentDbName} to ${name}`));
+          } else {
+            echo(chalk.green(`Started ${name}!!`));
+          }
+
           break;
         case !!options.cancel:
-          echo('stop database');
-          result = docker.stopContainer(name);
-          echo(
-            chalk.green(`Database ${result.stdout} stopped!`)
-          );
-          break;
+          try {
+            stopDatabase(name);
+            break;
+          } catch(e) {
+            echo(chalk.red(e));
+            break;
+          }
         case !!options.destroy:
           echo('Delete database');
 
@@ -231,11 +260,12 @@ async function runProgram() {
 
     program
       .command('project <name>')
+      .alias('pr')
+      .description('Load a project to set the local environment.')
       .option('-s, --set', 'Project branch set')
       .option('-u, --update', 'Runs bundle install, migrations, seeds')
       .option('-v, --volume', 'Link project to a new database volume')
       .option('-r, --reset', 'Full reset of the project database volume')
-      .description('Load a project to set the local environment.')
       .action((name, options) => {
         project = {
           name,
@@ -243,12 +273,27 @@ async function runProgram() {
         };
       });
 
+    program
+      .command('service <service>')
+      .alias('sr')
+      .description('Manage service state and updates')
+      .option('--update', 'Update service dependencies')
+      .action((service, options) => {
+        switch(true) {
+        case !!options.update:
+          updateService(servicesData, service);
+          break;
+        default:
+          echo(chalk.red(`Enter and option to manage ${service} or enter --help for details`));
+        }
+      });
+
     //Start of Line-Scope script execution
     clear();
     displayTitle();
     displayPath();
+    // processSpinner.start();
     program.parse(process.argv);
-    processSpinner.start();
 
     if (project) {
       const fullName = `${project.name}.json`;
@@ -259,25 +304,29 @@ async function runProgram() {
 
       await loadProject(servicesData, projectData, project);
 
-      processSpinner.stop();
-      process.exit(1);
+      // processSpinner.stop();
+      // process.exit(1);
     } else {
-      if (program.services) {
-        processSpinner.stop();
+
+      switch (true) {
+      case program.runSpinner:
+        echo('Run test spinner');
+        stopDatabase('Complete');
+        break;
+      case program.services:
         loadServices(servicesData);
-      }
-
-      if (program.environment) {
-        processSpinner.stop();
+        break;
+      case program.environment:
         getLocalEnvironmentDetails();
-      }
-
-      if (program.processPath) {
-        processSpinner.stop();
+        break;
+      case program.processPath:
         processPath();
+        break;
+      default:
+        // echo(chalk.green('Isolated command executed!!!'));
       }
 
-      process.exit(1);
+      // process.exit(1);
     }
 
   } catch (err) {
@@ -368,8 +417,38 @@ function loadServices(data) {
 async function loadProject(servicesData, projectData, projectCmd) {
   const set = projectCmd.options.set || 'base';
   const projectDbName = `db-${projectCmd.name}`;
+  const update = !!projectCmd.options.update;
+  const newDb = `db-${projectDbName}`;
+  const currentActiveDB = '';
+  let dbExists = '';
 
-  servicesData.services.forEach((service) => {
+  await docker.stopContainer(currentActiveDB);
+  dbExists = await docker.dbExists(newDb);
+
+  if (dbExists) {
+    await docker.startContainer(newDb);
+  } else {
+    await docker.createDockerDb(newDb);
+  }
+
+  // for (let service in servicesData.services) {
+  //   const selected = projectData[set].filter((project) => {
+  //     return project.name === service.name;
+  //   });
+  //   const selectedProject = selected[0];
+  //   const serviceData = {
+  //     root: servicesData.root,
+  //     directory: service.directory,
+  //   };
+  //
+  //   changeBranch(serviceData, selectedProject.name, selectedProject.branch, false);
+  //
+  //   if (!dbExists || update) {
+  //     updateService(serviceData, selectedProject.name, true);
+  //   }
+  // };
+
+  const promises = servicesData.services.map(async (service) => {
     const selected = projectData[set].filter((project) => {
       return project.name === service.name;
     });
@@ -379,54 +458,62 @@ async function loadProject(servicesData, projectData, projectCmd) {
       directory: service.directory,
     };
 
-    changeBranch(serviceData, selectedProject.name, selectedProject.branch, false);
+    await changeBranch(serviceData, selectedProject.name, selectedProject.branch, false);
 
-    // const dbExists = docker.dbExists(projectDbName);
-
-    if (!dbExists) {
-      updateService(serviceData);
+    if (!dbExists || update) {
+      await updateService(serviceData, selectedProject.name, true);
     }
   });
 
-  // Docker: stop container
-  const currentActiveDB = '';
-  await docker.stopContainer(currentActiveDB);
-  // Docker: check for existing project volume or create new volume from master volume
-  // Docker: link volume to container
-  // Docker: start container
-  const newDb = `db-${projectDbName}`;
-  const dbExists = await docker.dbExists(newDb);
-  if (!dbExists) {
-    await docker.createDockerDb(newDb);
-  }
-
-  await docker.startContainer(newDb);
-
-  // If new volume
-  if (!dbExists) {
-    // Git: run git pull
-    exec('git pull');
-    // : Run backend commands
-
-    // : Run bundle exec rake db:migrate
-
-    // (Option '-u, --update')
-    // Git: run git pull
-    // : Run bundle install
-    // : Run bundle exec rake db:migrate
-  }
+  return await Promise.all(promises);
 }
 
-async function updateService(service) {
-  const silent = false;
+async function updateService(data, name, runSpecial) {
+  const silent = true;
+  const dir = data.root + name;
+  const serviceObject = _.find(data.services, (service) => {
+    return service.name === name;
+  });
+  const baseCommands = [
+    'git pull',
+    'bundle install',
+    'bundle exec rake db:migrate',
+  ];
+  let commands;
 
-  if (service.type === 'backend') {
-    exec('bundle install', { silent });
-    exec('bundle exec rake db:migrate', { silent });
+  if (runSpecial && serviceObject.service_cmd) {
+    commands = baseCommands;
+  } else {
+    commands = _.concat(baseCommands, serviceObject.service_cmd);
+  }
 
-    service.service_cmd.forEach((cmd) => {
-      exec(cmd, { silent });
+  cd(dir);
+  if (serviceObject.type === 'backend') {
+    // for (let cmd of commands) {
+    //   const done = elegantStatus(`${name} ${cmd}`);
+    //
+    //   await exec(cmd, { silent }, function(code) {
+    //     if (code === 0) {
+    //       done(true);
+    //     } else {
+    //       done(false);
+    //     }
+    //   });
+    // }
+
+    const promises = commands.map(async (cmd) => {
+      const done = elegantStatus(`${name} ${cmd}`);
+
+      await exec(cmd, { silent }, function(code) {
+        if (code === 0) {
+          done(true);
+        } else {
+          done(false);
+        }
+      });
     });
+
+    return await Promise.all(promises);
   }
 }
 
@@ -439,9 +526,7 @@ function getLocalEnvironmentDetails() {
   tools.forEach((tool) => {
     const version = getVersion(tool);
 
-    echo(
-      chalk.yellow(version)
-    );
+    echo(chalk.yellow(version));
   });
 }
 
@@ -512,47 +597,25 @@ function changeBranch(fileData, service, setBranch, reset) {
 
   cd(dir);
   /*** Convert to test code ***/
-  echo('Directory: ' + dir);
-  echo('Service: ' + service);
-  echo('Branch: ' + branch);
-  echo('');
+  // echo('Directory: ' + dir);
+  // echo('Service: ' + service);
+  // echo('Branch: ' + branch);
+  // echo('');
   /***************************/
 
-  // if (reset) {
-  //   const rMessage = exec('git reset --hard', {silent: true});
-  //
-  //   echo(
-  //     chalk.blue(rMessage.stdout)
-  //   );
-  // } else {
-  //  const sMessage =  exec('git stash', {silent: true});
-  //  echo(
-  //    chalk.blue(sMessage.stdout);
-  //  )
-  // }
-  // cmdResult = exec(`git checkout ${branch}`, {silent: true});
-  // cd('-');
-  //
-  // echo (`${chalk.green('Service: ' + service)} - ${chalk.green(cmdResult.stdout)} - ${chalk.green(cmdResult.stderr)}`);
-}
-
-function createDatabase(name) {
-  try {
-    const newDb = `db-${name}`;
-    const result = docker.createDockerDb(newDb);
-    if (result.code === 0) {
-      echo(
-        chalk.green(`${newDb} successfully create and is running`)
-      );
-    } else {
-      echo(
-        chalk.red(`Database ${newDb} could not be created check for duplicates below`)
-      );
-      docker.dbExists(newDb);
-    }
-  } catch(e) {
-    echo(e);
+  if (reset) {
+    const rMessage = exec('git reset --hard', {silent: true});
+    echo(chalk.yellow(rMessage.stdout));
+  } else {
+    const sMessage =  exec('git stash', {silent: true});
+    echo(chalk.yellow(sMessage.stdout));
   }
+
+  cmdResult = exec(`git checkout ${branch}`, { async: true, silent: true});
+  cd('-');
+  echo (`${chalk.green('Service: ' + service)} - ${chalk.green(cmdResult.stdout)} - ${chalk.green(cmdResult.stderr)}`);
+
+  return cmdResult;
 }
 
 function tailService(data, service) {
@@ -586,4 +649,62 @@ function run(cmd, options) {
   } finally {
     processSpinner.stop();
   }
+}
+
+function stopDatabase(name) {
+  try {
+    /* Clui Example */
+    // const processSpinner = new Spinner('Processing command');
+    //
+    // processSpinner.start();
+    // processSpinner.message('Stopping Database...');
+    // setTimeout(function() {
+    //   try {
+    //     processSpinner.stop();
+    //   } catch(e) {
+    //     echo(`\n ${e} \n`);
+    //   }
+    // }, 3000);
+
+    /* Clui Example two */
+    // countdownSpinner.runSpinner();
+
+    /* cli-spinners example */
+    // const spinner = cliSpinners['dots'];
+    // const frames = spinner.frames;
+    // let i = 0;
+    //
+    // setInterval(function() {
+    //   logUpdate(`${frames[i = ++i % frames.length]} Unicorns`);
+    // }, spinner.interval);
+
+    /* cli-spinners example with heartbeats */
+    // heart.createEvent(1, { countTo: 10 }, function() {
+    //  process.stdout.write(`${frames[i = ++i % frames.length]} Unicorns`);
+    //  logUpdate(`${frames[i = ++i % frames.length]} Unicorns`);
+    // });
+
+    /* Ora Example */
+    const spinner = new Ora({
+      text: 'Loading files',
+    });
+
+    spinner.start();
+
+    setTimeout(() => {
+      spinner.color = 'yellow',
+      spinner.text = 'Loading dependencies';
+
+      setTimeout(() => {
+        spinner.succeed('All files and dependencies loaded!!!');
+      }, 3000);
+    }, 3000);
+
+  } catch(e) {
+    echo(e);
+  }
+  // docker.stopContainer(name);
+  // processSpinner.stop();
+  //
+  // echo(chalk.green('Database stopped!'));
 }

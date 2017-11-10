@@ -29,7 +29,7 @@ module.exports = {
   },
   currentDb() {
     const result = exec('docker ps | grep db', { silent: true });
-    const name = result.stdout.match(/(db-)\S+/g)[0];
+    const name = result.stdout && result.stdout.match(/(db-)\S+/g)[0];
 
     return name;
   },
@@ -37,7 +37,9 @@ module.exports = {
     exec(`docker start ${containerName}`);
   },
   stopContainer(containerName) {
-    exec(`docker stop ${containerName}`);
+    const result = exec(`docker stop ${containerName}`, { silent: false });
+
+    return result;
   },
   copyVolume(currentVolume, newVolume) {
     exec(`docker run --rm -i -t -v ${currentVolume}:/from  -v ${newVolume}:/to alpine ash -c "cd /to ; cp -a /from ."`);
