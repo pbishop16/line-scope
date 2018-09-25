@@ -5,28 +5,28 @@ const chalk = require('chalk');
 const clear = require('clear');
 const CLI = require('clui');
 const figlet = require('figlet');
-const inquirer = require('inquirer');
-const Preferences = require('preferences');
+// const inquirer = require('inquirer');
+// const Preferences = require('preferences');
 const _ = require('lodash');
-const git = require('simple-git')();
+// const git = require('simple-git')();
 const shell = require('shelljs');
 const program = require('commander');
 const gitState = require('git-state');
-const fs = require('fs-extra');
-const path = require('path');
-const Docker = require('dockerode');
-const cliSpinners = require('cli-spinners');
-const _setInterval = require('setinterval-plus');
-const heartbeats = require('heartbeats');
+// const fs = require('fs-extra');
+// const path = require('path');
+// const Docker = require('dockerode');
+// const cliSpinners = require('cli-spinners');
+// const _setInterval = require('setinterval-plus');
+// const heartbeats = require('heartbeats');
 const elegantStatus = require('elegant-status');
-const Q = require('q');
+// const Q = require('q');
 
 // const touch = require('touch');
-const heart = heartbeats.createHeart(1000);
+// const heart = heartbeats.createHeart(1000);
 
 const files = require('./lib/files');
 const docker = require('./lib/docker');
-const countdownSpinner = require('./lib/spinner');
+// const countdownSpinner = require('./lib/spinner');
 
 const Spinner = CLI.Spinner;
 
@@ -654,17 +654,17 @@ function run(cmd, options) {
 function stopDatabase(name) {
   try {
     /* Clui Example */
-    // const processSpinner = new Spinner('Processing command');
-    //
-    // processSpinner.start();
-    // processSpinner.message('Stopping Database...');
-    // setTimeout(function() {
-    //   try {
-    //     processSpinner.stop();
-    //   } catch(e) {
-    //     echo(`\n ${e} \n`);
-    //   }
-    // }, 3000);
+    const processSpinner = new Spinner('Processing command');
+
+    processSpinner.start();
+    processSpinner.message('Stopping Database...');
+    setTimeout(function() {
+      try {
+        processSpinner.stop();
+      } catch(e) {
+        echo(`\n ${e} \n`);
+      }
+    }, 3000);
 
     /* Clui Example two */
     // countdownSpinner.runSpinner();
@@ -685,24 +685,26 @@ function stopDatabase(name) {
     // });
 
     /* Ora Example */
-    const spinner = new Ora({
-      text: 'Loading files',
-    });
+  //   const spinner = new Ora({
+  //     text: 'Loading files',
+  //   });
+  //
+  //   spinner.start();
+  //
+  //   setTimeout(() => {
+  //     spinner.color = 'yellow',
+  //     spinner.text = 'Loading dependencies';
+  //
+  //     setTimeout(() => {
+  //       spinner.succeed('All files and dependencies loaded!!!');
+  //     }, 3000);
+  //   }, 3000);
+  //
+  // } catch(e) {
+  //   echo(e);
+} catch(e) {
 
-    spinner.start();
-
-    setTimeout(() => {
-      spinner.color = 'yellow',
-      spinner.text = 'Loading dependencies';
-
-      setTimeout(() => {
-        spinner.succeed('All files and dependencies loaded!!!');
-      }, 3000);
-    }, 3000);
-
-  } catch(e) {
-    echo(e);
-  }
+}
   // docker.stopContainer(name);
   // processSpinner.stop();
   //
